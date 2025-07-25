@@ -1,0 +1,33 @@
+{
+  "name": "ollama-cli",
+  "version": "1.0.0",
+  "description": "CLI app for Ollama SmolLM",
+  "main": "dist/index.js",
+  "bin": {
+    "ollama-cli": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "dev:watch": "nodemon --exec ts-node src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["cli", "ollama", "ai", "chat"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@types/node": "^20.10.6",
+    "@types/node-fetch": "^2.6.9",
+    "@types/readline-sync": "^1.4.8",
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0",
+    "node-fetch": "^2.7.0",
+    "readline-sync": "^1.4.10",
+    "typescript": "^5.3.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2",
+    "ts-node": "^10.9.2"
+  }
+}
