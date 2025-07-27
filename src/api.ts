@@ -19,6 +19,9 @@ export class OllamaAPI {
     };
 
     try {
+
+      console.log("====>data:", JSON.stringify(request));
+      
       const response = await fetch(this.config.apiUrl, {
         method: 'POST',
         headers: {
@@ -26,6 +29,8 @@ export class OllamaAPI {
         },
         body: JSON.stringify(request)
       });
+
+
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);

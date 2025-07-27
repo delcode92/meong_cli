@@ -10,6 +10,11 @@ class OllamaAPI {
     constructor() {
         this.config = (0, config_1.getConfig)();
     }
+    /**
+     * Sends a request to the Ollama API and streams the response.
+     * This is a generator function that yields content chunks as they arrive.
+     * @param messages The array of messages to send.
+     */
     async *streamChat(messages) {
         const request = {
             model: this.config.model,
@@ -17,6 +22,7 @@ class OllamaAPI {
             messages: messages
         };
         try {
+            console.log("====>data:", JSON.stringify(request));
             const response = await (0, node_fetch_1.default)(this.config.apiUrl, {
                 method: 'POST',
                 headers: {
@@ -31,9 +37,10 @@ class OllamaAPI {
                 throw new Error('No response body');
             }
             const reader = response.body;
+            const decoder = new TextDecoder();
             let buffer = '';
-            reader.on('data', (chunk) => {
-                buffer += chunk.toString();
+            for await (const chunk of reader) {
+                buffer += decoder.decode(chunk, { stream: true });
                 const lines = buffer.split('\n');
                 buffer = lines.pop() || '';
                 for (const line of lines) {
@@ -41,49 +48,28 @@ class OllamaAPI {
                         try {
                             const data = JSON.parse(line);
                             if (data.message && data.message.content) {
-                                // Emit each content chunk
-                                process.stdout.write(data.message.content);
+                                yield data.message.content;
+                            }
+                            if (data.done) {
+                                return; // End the generator
                             }
                         }
                         catch (error) {
-                            // Ignore parse errors for incomplete chunks
+                            console.error('\n[Error] Failed to parse stream chunk:', line);
                         }
                     }
                 }
-            });
-            // Return a promise that resolves when the stream is complete
-            return new Promise((resolve, reject) => {
-                let fullResponse = '';
-                reader.on('data', (chunk) => {
-                    buffer += chunk.toString();
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop() || '';
-                    for (const line of lines) {
-                        if (line.trim()) {
-                            try {
-                                const data = JSON.parse(line);
-                                if (data.message && data.message.content) {
-                                    fullResponse += data.message.content;
-                                }
-                                if (data.done) {
-                                    resolve();
-                                    return;
-                                }
-                            }
-                            catch (error) {
-                                // Ignore parse errors for incomplete chunks
-                            }
-                        }
-                    }
-                });
-                reader.on('error', reject);
-                reader.on('end', () => resolve());
-            });
+            }
         }
         catch (error) {
             throw new Error(`Failed to connect to Ollama API: ${error}`);
         }
     }
+    /**
+     * Sends a request to the Ollama API and waits for the full response.
+     * @param messages The array of messages to send.
+     * @returns The content of the assistant's response.
+     */
     async sendMessage(messages) {
         const request = {
             model: this.config.model,

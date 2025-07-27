@@ -37,10 +37,14 @@ exports.defaultConfig = void 0;
 exports.getConfig = getConfig;
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
+// import path from 'path';
+// Load .env from root directory
+// dotenv.config({ path: path.resolve(__dirname, '../.env') });
+console.log("history location: ", path.join(os.homedir(), '.ollama-cli-history.json'));
 exports.defaultConfig = {
-    apiUrl: 'http://103.145.126.158:3012/api/chat',
+    apiUrl: 'https://curly-couscous-r5xwp9rw9xgfpjw5-11434.app.github.dev/api/chat',
     model: 'smollm',
-    maxHistory: 100,
+    maxHistory: 3,
     historyFile: path.join(os.homedir(), '.ollama-cli-history.json')
 };
 function getConfig() {

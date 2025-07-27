@@ -4,6 +4,8 @@ import * as readline from 'readline';
 import { OllamaAPI } from './api';
 import { HistoryManager } from './history';
 import { Message } from './types';
+import { readFileAndSummarize } from './summarizer';
+import { executeCommand } from './executor';
 
 export class CLI {
   private api: OllamaAPI;
@@ -19,7 +21,7 @@ export class CLI {
 
   private setupCommands(): void {
     this.program
-      .name('ollama-cli')
+      .name('meong-cli')
       .description('CLI for interacting with Ollama SmolLM')
       .version('1.0.0');
 
@@ -34,6 +36,17 @@ export class CLI {
       .description('Ask a single question')
       .option('-s, --stream', 'Enable streaming responses', true)
       .action((question, options) => this.askQuestion(question, options.stream));
+
+    this.program
+      .command('read <file_path>')
+      .description('Read and analyze a file. Summarization is optimized for .ts, .js, .tsx, and .jsx files.')
+      .option('-s, --stream', 'Enable streaming responses', true)
+      .action((filePath, options) => this.handleFileAnalysis(filePath, options.stream)); // <-- Updated
+
+    this.program
+        .command('exec <command>')
+        .description('Execute a shell command and get help from the AI on error')
+        .action((command) => this.handleExec(command));
 
     this.program
       .command('history')
@@ -64,7 +77,8 @@ export class CLI {
   async startChat(streaming: boolean = true): Promise<void> {
     console.log(chalk.blue('🤖 Ollama SmolLM CLI'));
     console.log(chalk.gray('Type "exit" or press Ctrl+C to quit. Use up/down arrows for history.\n'));
-    console.log(chalk.gray('Commands: "clear" to clear conversation, "new" for new conversation.\n'));
+    console.log(chalk.gray('Commands: "clear", "new", or use "@ <file_path>" to analyze a file.\n'));
+    console.log(chalk.gray('          "!exec <command>" to execute a shell command.\n'));
 
     const conversation = this.history.getCurrentConversation();
     if (conversation.length > 0) {
@@ -81,33 +95,60 @@ export class CLI {
     rl.prompt();
 
     rl.on('line', async (input) => {
-      const command = input.trim().toLowerCase();
+      const trimmedInput = input.trim();
 
-      if (command === 'exit') {
+      if (trimmedInput.toLowerCase() === 'exit') {
         rl.close();
         return;
       }
+      
+      if (trimmedInput.startsWith('@')) {
+        const parts = trimmedInput.substring(1).trim().split(/\s+/);
+        const filePath = parts[0];
+        const question = parts.slice(1).join(' ');
 
-      if (command === 'clear') {
+        const userMessage: Message = { role: 'user', content: trimmedInput };
+        this.history.addMessage(userMessage);
+        await this.handleFileAnalysis(filePath, streaming, true, question); // In-chat analysis
+        rl.history = this.history.getCurrentConversation().filter(m => m.role === 'user').map(m => m.content).reverse();
+        rl.prompt();
+        return;
+      }
+
+      if (trimmedInput.startsWith('!exec')) {
+        const command = trimmedInput.substring(5).trim();
+        if (command) {
+            const userMessage: Message = { role: 'user', content: trimmedInput };
+            this.history.addMessage(userMessage);
+            await this.handleExec(command, true);
+            rl.history = this.history.getCurrentConversation().filter(m => m.role === 'user').map(m => m.content).reverse();
+        } else {
+            console.log(chalk.red('Please provide a command to execute.'));
+        }
+        rl.prompt();
+        return;
+      }
+
+      if (trimmedInput.toLowerCase() === 'clear') {
         this.clearConversation();
-        rl.history = []; // Clear readline's internal history
+        rl.history = [];
         rl.prompt();
         return;
       }
 
-      if (command === 'new') {
+      if (trimmedInput.toLowerCase() === 'new') {
         this.newConversation();
-        rl.history = []; // Clear readline's internal history
+        rl.history = [];
         rl.prompt();
         return;
       }
 
-      if (input.trim() === '') {
+      if (trimmedInput === '') {
         rl.prompt();
         return;
       }
 
-      const userMessage: Message = { role: 'user', content: input };
+      const userMessage: Message = { role: 'user', content: trimmedInput };
       this.history.addMessage(userMessage);
 
       try {
@@ -126,7 +167,6 @@ export class CLI {
         console.log(chalk.red(`\n❌ Error: ${err.message}`));
       }
 
-      // Refresh history for the next prompt
       rl.history = this.history.getCurrentConversation().filter(m => m.role === 'user').map(m => m.content).reverse();
       rl.prompt();
 
@@ -151,7 +191,6 @@ export class CLI {
       };
       this.history.addMessage(assistantMessage);
     } catch (error) {
-      // The error handling in startChat will catch this.
       throw error;
     }
   }
@@ -172,10 +211,103 @@ export class CLI {
             process.stdout.write(chunk);
             fullResponse += chunk;
         }
-        console.log(); // Newline after streaming
+        console.log();
       } else {
         const response = await this.api.sendMessage([userMessage]);
         console.log(response);
+      }
+    } catch (error) {
+        const err = error as Error;
+        console.log(chalk.red(`\n❌ Error: ${err.message}`));
+    }
+  }
+
+  async handleExec(command: string, inChat: boolean = false): Promise<void> {
+    if (!inChat) {
+        console.log(chalk.yellow(`🚀 Executing: ${command}`));
+    } else {
+        process.stdout.write(chalk.yellow(`🚀 Executing: ${command}\n`));
+    }
+
+    const { error, stdout, stderr } = await executeCommand(command);
+
+    if (error) {
+        console.log(chalk.red('❌ Command failed. Asking for help...'));
+        const prompt = `The command "${command}" failed with the following error:\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}\n\nPlease explain the error and suggest a solution.`;
+        
+        const messages: Message[] = inChat 
+            ? [...this.history.getCurrentConversation().slice(0, -1), { role: 'user', content: prompt }]
+            : [{ role: 'user', content: prompt }];
+
+        process.stdout.write(chalk.blue('SmolLM: '));
+        try {
+            let fullResponse = '';
+            for await (const chunk of this.api.streamChat(messages)) {
+                process.stdout.write(chunk);
+                fullResponse += chunk;
+            }
+            if (inChat) {
+                const assistantMessage: Message = { role: 'assistant', content: fullResponse };
+                this.history.addMessage(assistantMessage);
+            }
+            process.stdout.write('\n\n');
+        } catch (e) {
+            const err = e as Error;
+            console.log(chalk.red(`\n❌ Error getting help: ${err.message}`));
+        }
+    } else {
+        console.log(chalk.green('✅ Command successful!'));
+        if (stdout) {
+            console.log(chalk.blue('Output:\n') + stdout);
+        }
+    }
+  }
+
+  async handleFileAnalysis(filePath: string, streaming: boolean = true, inChat: boolean = false, question: string = ''): Promise<void> {
+    if (!inChat) {
+      console.log(chalk.yellow(`📄 Reading and summarizing file: ${filePath}`));
+    } else {
+      process.stdout.write(chalk.yellow(`📄 Reading and summarizing file: ${filePath}\n`));
+    }
+
+    const summarizedContent = readFileAndSummarize(filePath);
+
+    if (summarizedContent.startsWith('Error:')) {
+      console.log(chalk.red(`\n❌ ${summarizedContent}`));
+      return;
+    }
+
+    if (!inChat) {
+        console.log(chalk.blue('📝 Summary generated. Sending to SmolLM for analysis...'));
+        console.log(summarizedContent);
+    }
+
+    const finalQuestion = question || 'What does this code do?';
+
+    const prompt = `\nBased on the following summarized code from the file "${filePath}", please provide a brief explanation of its main purpose and functionality.\n\n${summarizedContent}\n\n${finalQuestion}\n`;
+
+    const analysisMessages: Message[] = [
+      ...this.history.getCurrentConversation().slice(0, -1), // Get history *before* the @ command
+      { role: 'user', content: prompt }
+    ];
+
+    process.stdout.write(chalk.blue('SmolLM: '));
+
+    try {
+      if (streaming) {
+        let fullResponse = '';
+        for await (const chunk of this.api.streamChat(analysisMessages)) {
+            process.stdout.write(chunk);
+            fullResponse += chunk;
+        }
+        const assistantMessage: Message = { role: 'assistant', content: fullResponse };
+        this.history.addMessage(assistantMessage);
+        process.stdout.write('\n\n');
+      } else {
+        const response = await this.api.sendMessage(analysisMessages);
+        const assistantMessage: Message = { role: 'assistant', content: response };
+        this.history.addMessage(assistantMessage);
+        process.stdout.write(response + '\n\n');
       }
     } catch (error) {
         const err = error as Error;

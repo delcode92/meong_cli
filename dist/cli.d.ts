@@ -7,6 +7,8 @@ export declare class CLI {
     startChat(streaming?: boolean): Promise<void>;
     private streamResponse;
     askQuestion(question: string, streaming?: boolean): Promise<void>;
+    handleExec(command: string, inChat?: boolean): Promise<void>;
+    handleFileAnalysis(filePath: string, streaming?: boolean, inChat?: boolean, question?: string): Promise<void>;
     showHistory(): void;
     clearConversation(): void;
     newConversation(): void;
