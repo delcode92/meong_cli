@@ -34,3 +34,21 @@
     *   **File Path Resolution:** I fixed a bug where file paths were not being resolved correctly from the project's root directory by using `path.resolve(process.cwd(), filePath)`.
     *   **Input Parsing:** I improved the in-chat command parser to correctly separate the file path from an optional follow-up question on the same line.
 5.  **Verification:** I ran the application (`npm run dev chat`) multiple times to test the new features and ensure the bug fixes were effective.
+
+---
+
+# Gemini CLI Interaction Summary (Latest)
+
+**Objective:** Add a shell command execution feature to the `meong-cli` project.
+
+**User Request:** The user wanted to add a feature to execute shell commands, analyze the output for errors, and use the connected Ollama model to suggest solutions, similar to a feature in `gemini-cli`.
+
+**Actions Taken:**
+
+1.  **Executor Module:** I created a new `src/executor.ts` module to encapsulate the command execution logic using Node's `child_process`.
+2.  **CLI Command Implementation:**
+    *   I added a new top-level `exec <command>` command to `src/cli.ts`.
+    *   I implemented an in-chat `!exec <command>` handler within the `startChat` method.
+3.  **Error Handling & AI Integration:** I implemented the core logic within a `handleExec` function. If a command results in an error (non-zero exit code), the function captures `stderr` and `stdout` and sends them to the Ollama API with a prompt asking for an explanation and a solution.
+4.  **Output Handling:** The command's output is displayed to the user. If an error occurs, the AI's suggestion is streamed back. For successful commands, the `stdout` is printed.
+5.  **Verification:** I ran `npm run build` to compile the new TypeScript code and ensure there were no build errors.
