@@ -5,6 +5,8 @@ export declare class CLI {
     constructor();
     private setupCommands;
     startChat(streaming?: boolean): Promise<void>;
+    private runPipedChat;
+    private runInteractiveChat;
     private streamResponse;
     askQuestion(question: string, streaming?: boolean): Promise<void>;
     handleExec(command: string, inChat?: boolean): Promise<void>;

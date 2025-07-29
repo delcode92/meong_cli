@@ -13,9 +13,13 @@ console.log("history location: ", path.join(os.homedir(), '.ollama-cli-history.j
 
 export const defaultConfig: Config = {
   apiUrl: 'https://curly-couscous-r5xwp9rw9xgfpjw5-11434.app.github.dev/api/chat',
+  // apiUrl: 'http://localhost:11434/api/chat',
   model: 'smollm',
-  maxHistory: 3,
-  historyFile: path.join(os.homedir(), '.ollama-cli-history.json')
+  maxHistory: 10,
+  historyFile: path.join(os.homedir(), '.ollama-cli-history.json'),
+  temperature: 0.2,
+  top_p: 0.9,
+  repeat_penalty: 1.2
 };
 
 export function getConfig(): Config {

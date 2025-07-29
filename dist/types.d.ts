@@ -7,6 +7,9 @@ export interface ChatRequest {
     model: string;
     stream: boolean;
     messages: Message[];
+    temperature?: number;
+    top_p?: number;
+    repeat_penalty?: number;
 }
 export interface ChatResponse {
     model: string;
@@ -22,9 +25,19 @@ export interface Config {
     model: string;
     maxHistory: number;
     historyFile: string;
+    temperature: number;
+    top_p: number;
+    repeat_penalty: number;
 }
 export interface ConversationHistory {
     conversations: Message[][];
     currentIndex: number;
+}
+export interface EmbeddingRequest {
+    model: string;
+    prompt: string;
+}
+export interface EmbeddingResponse {
+    embedding: number[];
 }
 //# sourceMappingURL=types.d.ts.map

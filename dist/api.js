@@ -11,6 +11,42 @@ class OllamaAPI {
         this.config = (0, config_1.getConfig)();
     }
     /**
+     * Gets the messages formatted for the API request, including a system prompt
+     * and a limited history (windowed history).
+     * @param messages The full array of chat messages.
+     * @returns A new array of messages formatted for the API.
+     */
+    getWindowedMessages(messages) {
+        const systemMessage = {
+            role: 'system',
+            content: 'You are a command-line assistant. Be extremely concise. No chatter. No explanations. Just the answer.'
+        };
+        const maxChars = 2048;
+        let usedChars = systemMessage.content.length;
+        const context = [];
+        // Always include the most recent message, even if it's very long.
+        const latestMessage = messages[messages.length - 1];
+        if (latestMessage) {
+            // Truncate the latest message if it alone exceeds the limit.
+            if (latestMessage.content.length > maxChars) {
+                latestMessage.content = latestMessage.content.substring(0, maxChars) + "\n[...TRUNCATED...]";
+            }
+            context.unshift(latestMessage);
+            usedChars += latestMessage.content.length;
+        }
+        // Add older messages until the character limit is reached.
+        for (let i = messages.length - 2; i >= 0; i--) {
+            const message = messages[i];
+            const messageLength = message.content.length;
+            if (usedChars + messageLength > maxChars) {
+                break; // Stop if adding the next message would exceed the limit
+            }
+            context.unshift(message);
+            usedChars += messageLength;
+        }
+        return [systemMessage, ...context];
+    }
+    /**
      * Sends a request to the Ollama API and streams the response.
      * This is a generator function that yields content chunks as they arrive.
      * @param messages The array of messages to send.
@@ -19,10 +55,12 @@ class OllamaAPI {
         const request = {
             model: this.config.model,
             stream: true,
-            messages: messages
+            messages: this.getWindowedMessages(messages),
+            temperature: this.config.temperature,
+            top_p: this.config.top_p,
+            repeat_penalty: this.config.repeat_penalty
         };
         try {
-            console.log("====>data:", JSON.stringify(request));
             const response = await (0, node_fetch_1.default)(this.config.apiUrl, {
                 method: 'POST',
                 headers: {
@@ -66,6 +104,37 @@ class OllamaAPI {
         }
     }
     /**
+     * Generates an embedding for a given text.
+     * @param text The text to generate an embedding for.
+     * @returns The embedding vector.
+     */
+    async getEmbedding(text) {
+        const request = {
+            model: this.config.model,
+            prompt: text,
+        };
+        try {
+            // The embeddings endpoint is usually at /api/embeddings
+            const embeddingApiUrl = this.config.apiUrl.replace('/api/chat', '/api/embeddings');
+            const response = await (0, node_fetch_1.default)(embeddingApiUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(request),
+            });
+            if (!response.ok) {
+                const errorBody = await response.text();
+                throw new Error(`HTTP error! status: ${response.status}, body: ${errorBody}`);
+            }
+            const data = await response.json();
+            return data.embedding;
+        }
+        catch (error) {
+            throw new Error(`Failed to generate embedding: ${error}`);
+        }
+    }
+    /**
      * Sends a request to the Ollama API and waits for the full response.
      * @param messages The array of messages to send.
      * @returns The content of the assistant's response.
@@ -74,7 +143,10 @@ class OllamaAPI {
         const request = {
             model: this.config.model,
             stream: false,
-            messages: messages
+            messages: this.getWindowedMessages(messages),
+            temperature: this.config.temperature,
+            top_p: this.config.top_p,
+            repeat_penalty: this.config.repeat_penalty
         };
         try {
             const response = await (0, node_fetch_1.default)(this.config.apiUrl, {

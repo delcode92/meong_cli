@@ -73,10 +73,6 @@ class HistoryManager {
             ...message,
             timestamp: Date.now()
         });
-        // Limit conversation length
-        if (conversation.length > this.config.maxHistory) {
-            conversation.splice(0, conversation.length - this.config.maxHistory);
-        }
         this.saveHistory();
     }
     newConversation() {
