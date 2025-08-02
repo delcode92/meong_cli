@@ -2,6 +2,7 @@ export declare class CLI {
     private api;
     private history;
     private program;
+    private config;
     constructor();
     private setupCommands;
     startChat(streaming?: boolean): Promise<void>;

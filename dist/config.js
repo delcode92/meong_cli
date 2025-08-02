@@ -32,28 +32,55 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.defaultConfig = void 0;
 exports.getConfig = getConfig;
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
-// import path from 'path';
+const dotenv_1 = __importDefault(require("dotenv"));
 // Load .env from root directory
-// dotenv.config({ path: path.resolve(__dirname, '../.env') });
-console.log("history location: ", path.join(os.homedir(), '.ollama-cli-history.json'));
+dotenv_1.default.config({ path: path.resolve(process.cwd(), '.env') });
 exports.defaultConfig = {
-    apiUrl: 'https://curly-couscous-r5xwp9rw9xgfpjw5-11434.app.github.dev/api/chat',
-    // apiUrl: 'http://localhost:11434/api/chat',
+    apiProvider: 'huggingface',
+    apiUrl: 'http://localhost:11434/api/chat',
     model: 'smollm',
-    maxHistory: 10,
-    historyFile: path.join(os.homedir(), '.ollama-cli-history.json'),
+    hfModel: 'HuggingFaceTB/SmolLM3-3B',
+    hfEmbeddingModel: 'sentence-transformers/all-MiniLM-L6-v2',
+    hfToken: undefined, // No default token
+    maxHistory: 3,
+    historyFile: path.join(os.homedir(), '.meong-cli-history.json'),
     temperature: 0.2,
     top_p: 0.9,
     repeat_penalty: 1.2
 };
-function getConfig() {
-    // In a real app, you might want to read from a config file
-    // For now, we'll use the default config
-    return exports.defaultConfig;
+function getConfig(options = {}) {
+    // Create a cleaned-up options object that only contains defined values
+    const cleanedOptions = Object.entries(options)
+        .filter(([, value]) => value !== undefined)
+        .reduce((obj, [key, value]) => {
+        obj[key] = value;
+        return obj;
+    }, {});
+    // Precedence: 1. Env variables -> 2. CLI options -> 3. Default config
+    const config = {
+        ...exports.defaultConfig,
+        // Environment variables provide a base
+        apiProvider: process.env.API_PROVIDER || exports.defaultConfig.apiProvider,
+        apiUrl: process.env.OLLAMA_API_URL || exports.defaultConfig.apiUrl,
+        model: process.env.OLLAMA_MODEL || exports.defaultConfig.model,
+        hfToken: process.env.HF_TOKEN || exports.defaultConfig.hfToken,
+        hfModel: process.env.HF_MODEL || exports.defaultConfig.hfModel,
+        hfEmbeddingModel: process.env.HF_EMBEDDING_MODEL || exports.defaultConfig.hfEmbeddingModel,
+        // CLI options override everything else
+        ...cleanedOptions,
+    };
+    // Special handling for hfToken to ensure CLI doesn't nullify it
+    if (cleanedOptions.apiProvider === 'huggingface' && !config.hfToken) {
+        config.hfToken = process.env.HF_TOKEN;
+    }
+    return config;
 }
 //# sourceMappingURL=config.js.map

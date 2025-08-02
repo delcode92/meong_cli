@@ -1,6 +1,8 @@
-import { Message } from './types';
+import { Message, Config } from './types';
 export declare class OllamaAPI {
     private config;
+    private hfClient?;
+    constructor(config?: Config);
     /**
      * Gets the messages formatted for the API request, including a system prompt
      * and a limited history (windowed history).
@@ -14,6 +16,8 @@ export declare class OllamaAPI {
      * @param messages The array of messages to send.
      */
     streamChat(messages: Message[]): AsyncGenerator<string>;
+    private streamChatHuggingFace;
+    private streamChatOllama;
     /**
      * Generates an embedding for a given text.
      * @param text The text to generate an embedding for.

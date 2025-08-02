@@ -48,7 +48,6 @@ const relevance_1 = require("./relevance");
 const config_1 = require("./config");
 class CLI {
     constructor() {
-        this.api = new api_1.OllamaAPI();
         this.history = new history_1.HistoryManager();
         this.program = new commander_1.Command();
         this.setupCommands();
@@ -56,27 +55,63 @@ class CLI {
     setupCommands() {
         this.program
             .name('meong-cli')
-            .description('CLI for interacting with Ollama SmolLM')
+            .description('CLI for interacting with language models from Ollama or Hugging Face.')
             .version('1.0.0');
         this.program
             .command('chat')
             .description('Start an interactive chat session')
+            .option('--provider <provider>', 'API provider: "ollama" or "huggingface"')
+            .option('--hf-model <model>', 'Hugging Face model name')
             .option('-s, --stream', 'Enable streaming responses', true)
-            .action((options) => this.startChat(options.stream));
+            .action((options) => {
+            this.config = (0, config_1.getConfig)({
+                apiProvider: options.provider,
+                hfModel: options.hfModel,
+            });
+            this.api = new api_1.OllamaAPI(this.config);
+            this.startChat(options.stream);
+        });
         this.program
             .command('ask <question>')
             .description('Ask a single question')
+            .option('--provider <provider>', 'API provider: "ollama" or "huggingface"')
+            .option('--hf-model <model>', 'Hugging Face model name')
             .option('-s, --stream', 'Enable streaming responses', true)
-            .action((question, options) => this.askQuestion(question, options.stream));
+            .action((question, options) => {
+            this.config = (0, config_1.getConfig)({
+                apiProvider: options.provider,
+                hfModel: options.hfModel,
+            });
+            this.api = new api_1.OllamaAPI(this.config);
+            this.askQuestion(question, options.stream);
+        });
         this.program
             .command('read <file_path>')
             .description('Read and analyze a file. Summarization is optimized for .ts, .js, .tsx, and .jsx files.')
+            .option('--provider <provider>', 'API provider: "ollama" or "huggingface"')
+            .option('--hf-model <model>', 'Hugging Face model name')
             .option('-s, --stream', 'Enable streaming responses', true)
-            .action((filePath, options) => this.handleFileAnalysis(filePath, options.stream)); // <-- Updated
+            .action((filePath, options) => {
+            this.config = (0, config_1.getConfig)({
+                apiProvider: options.provider,
+                hfModel: options.hfModel,
+            });
+            this.api = new api_1.OllamaAPI(this.config);
+            this.handleFileAnalysis(filePath, options.stream);
+        });
         this.program
             .command('exec <command>')
             .description('Execute a shell command and get help from the AI on error')
-            .action((command) => this.handleExec(command));
+            .option('--provider <provider>', 'API provider: "ollama" or "huggingface"')
+            .option('--hf-model <model>', 'Hugging Face model name')
+            .action((command, options) => {
+            this.config = (0, config_1.getConfig)({
+                apiProvider: options.provider,
+                hfModel: options.hfModel,
+            });
+            this.api = new api_1.OllamaAPI(this.config);
+            this.handleExec(command);
+        });
         this.program
             .command('history')
             .description('Show conversation history')
@@ -121,9 +156,15 @@ class CLI {
         if (fullInput.trim()) {
             await this.askQuestion(fullInput.trim(), streaming);
         }
+        else {
+            // If nothing was piped, but we are not in a TTY, it's an ambiguous state.
+            // For now, we can assume the user intended to start an interactive chat.
+            this.runInteractiveChat(streaming);
+        }
     }
     runInteractiveChat(streaming) {
-        console.log(chalk_1.default.blue('🤖 Ollama SmolLM CLI'));
+        const providerName = this.config.apiProvider === 'huggingface' ? 'Hugging Face' : 'Ollama';
+        console.log(chalk_1.default.blue(`🤖 CLI connected to ${providerName}`));
         console.log(chalk_1.default.gray('Type "exit" or press Ctrl+C to quit. Use up/down arrows for history.\n'));
         console.log(chalk_1.default.gray('Commands: "clear", "new", or use "@ <file_path>" to analyze a file.\n'));
         console.log(chalk_1.default.gray('          "!exec <command>" to execute a shell command.\n'));
@@ -188,10 +229,10 @@ class CLI {
             const userMessage = { role: 'user', content: trimmedInput };
             this.history.addMessage(userMessage);
             try {
-                process.stdout.write(chalk_1.default.blue('SmolLM: '));
-                const config = (0, config_1.getConfig)();
+                const modelName = this.config.apiProvider === 'huggingface' ? this.config.hfModel : this.config.model;
+                process.stdout.write(chalk_1.default.blue(`${modelName}: `));
                 const relevantHistory = await (0, relevance_1.getRelevantHistory)(userMessage, this.history.getCurrentConversation().slice(0, -1), // History before the new message
-                config.maxHistory, this.api);
+                this.config.maxHistory, this.api);
                 const messages = [...relevantHistory, userMessage];
                 if (streaming) {
                     await this.streamResponse(messages);
@@ -237,8 +278,9 @@ class CLI {
             role: 'user',
             content: question
         };
+        const modelName = this.config.apiProvider === 'huggingface' ? this.config.hfModel : this.config.model;
         console.log(chalk_1.default.green('Question: ') + question);
-        process.stdout.write(chalk_1.default.blue('SmolLM: '));
+        process.stdout.write(chalk_1.default.blue(`${modelName}: `));
         try {
             if (streaming) {
                 let fullResponse = '';
@@ -275,7 +317,8 @@ class CLI {
             const messages = inChat
                 ? [...this.history.getCurrentConversation().slice(0, -1), { role: 'user', content: prompt }]
                 : [{ role: 'user', content: prompt }];
-            process.stdout.write(chalk_1.default.blue('SmolLM: '));
+            const modelName = this.config.apiProvider === 'huggingface' ? this.config.hfModel : this.config.model;
+            process.stdout.write(chalk_1.default.blue(`${modelName}: `));
             try {
                 let fullResponse = '';
                 for await (const chunk of this.api.streamChat(messages)) {
@@ -317,7 +360,7 @@ class CLI {
             summarizedContent = summarizedContent.substring(0, maxSummaryLength) + "\n[...SUMMARY TRUNCATED...]";
         }
         if (!inChat) {
-            console.log(chalk_1.default.blue('📝 Summary generated. Sending to SmolLM for analysis...'));
+            console.log(chalk_1.default.blue('📝 Summary generated. Sending to model for analysis...'));
             console.log(summarizedContent);
         }
         const finalQuestion = question || 'What does this code do?';
@@ -326,7 +369,8 @@ class CLI {
             ...this.history.getCurrentConversation().slice(0, -1), // Get history *before* the @ command
             { role: 'user', content: prompt }
         ];
-        process.stdout.write(chalk_1.default.blue('SmolLM: '));
+        const modelName = this.config.apiProvider === 'huggingface' ? this.config.hfModel : this.config.model;
+        process.stdout.write(chalk_1.default.blue(`${modelName}: `));
         try {
             if (streaming) {
                 let fullResponse = '';
@@ -377,7 +421,7 @@ class CLI {
         console.log(chalk_1.default.blue('📋 All Conversations:\n'));
         conversations.forEach((conv) => {
             const indicator = conv.index === this.history['history'].currentIndex ? '→' : ' ';
-            const preview = conv.lastMessage ? `: "${conv.lastMessage}..."` : ': (empty)';
+            const preview = conv.lastMessage ? `: "${conv.lastMessage}"...` : ': (empty)';
             console.log(`${indicator} ${chalk_1.default.cyan(`[${conv.index}]`)} ` +
                 `${conv.messageCount} messages${preview}`);
         });

@@ -20,9 +20,14 @@ export interface ChatResponse {
     };
     done: boolean;
 }
+export type ApiProvider = 'ollama' | 'huggingface' | 'hf-inference';
 export interface Config {
+    apiProvider: ApiProvider;
     apiUrl: string;
     model: string;
+    hfModel: string;
+    hfEmbeddingModel: string;
+    hfToken?: string;
     maxHistory: number;
     historyFile: string;
     temperature: number;

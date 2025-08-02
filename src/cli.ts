@@ -3,19 +3,19 @@ import chalk from 'chalk';
 import * as readline from 'readline';
 import { OllamaAPI } from './api';
 import { HistoryManager } from './history';
-import { Message } from './types';
+import { Message, ApiProvider, Config } from './types';
 import { readFileAndSummarize } from './summarizer';
 import { executeCommand } from './executor';
 import { getRelevantHistory } from './relevance';
 import { getConfig } from './config';
 
 export class CLI {
-  private api: OllamaAPI;
+  private api!: OllamaAPI; // To be initialized in command actions
   private history: HistoryManager;
   private program: Command;
+  private config!: Config;
 
   constructor() {
-    this.api = new OllamaAPI();
     this.history = new HistoryManager();
     this.program = new Command();
     this.setupCommands();
@@ -24,31 +24,67 @@ export class CLI {
   private setupCommands(): void {
     this.program
       .name('meong-cli')
-      .description('CLI for interacting with Ollama SmolLM')
+      .description('CLI for interacting with language models from Ollama or Hugging Face.')
       .version('1.0.0');
 
     this.program
       .command('chat')
       .description('Start an interactive chat session')
+      .option('--provider <provider>', 'API provider: "ollama" or "huggingface"')
+      .option('--hf-model <model>', 'Hugging Face model name')
       .option('-s, --stream', 'Enable streaming responses', true)
-      .action((options) => this.startChat(options.stream));
+      .action((options) => {
+        this.config = getConfig({
+          apiProvider: options.provider as ApiProvider,
+          hfModel: options.hfModel,
+        });
+        this.api = new OllamaAPI(this.config);
+        this.startChat(options.stream);
+      });
 
     this.program
       .command('ask <question>')
       .description('Ask a single question')
+      .option('--provider <provider>', 'API provider: "ollama" or "huggingface"')
+      .option('--hf-model <model>', 'Hugging Face model name')
       .option('-s, --stream', 'Enable streaming responses', true)
-      .action((question, options) => this.askQuestion(question, options.stream));
+      .action((question, options) => {
+        this.config = getConfig({
+          apiProvider: options.provider as ApiProvider,
+          hfModel: options.hfModel,
+        });
+        this.api = new OllamaAPI(this.config);
+        this.askQuestion(question, options.stream)
+      });
 
     this.program
       .command('read <file_path>')
       .description('Read and analyze a file. Summarization is optimized for .ts, .js, .tsx, and .jsx files.')
+      .option('--provider <provider>', 'API provider: "ollama" or "huggingface"')
+      .option('--hf-model <model>', 'Hugging Face model name')
       .option('-s, --stream', 'Enable streaming responses', true)
-      .action((filePath, options) => this.handleFileAnalysis(filePath, options.stream)); // <-- Updated
+      .action((filePath, options) => {
+        this.config = getConfig({
+          apiProvider: options.provider as ApiProvider,
+          hfModel: options.hfModel,
+        });
+        this.api = new OllamaAPI(this.config);
+        this.handleFileAnalysis(filePath, options.stream)
+      });
 
     this.program
         .command('exec <command>')
         .description('Execute a shell command and get help from the AI on error')
-        .action((command) => this.handleExec(command));
+        .option('--provider <provider>', 'API provider: "ollama" or "huggingface"')
+        .option('--hf-model <model>', 'Hugging Face model name')
+        .action((command, options) => {
+          this.config = getConfig({
+            apiProvider: options.provider as ApiProvider,
+            hfModel: options.hfModel,
+          });
+          this.api = new OllamaAPI(this.config);
+          this.handleExec(command)
+        });
 
     this.program
       .command('history')
@@ -100,11 +136,16 @@ export class CLI {
 
     if (fullInput.trim()) {
       await this.askQuestion(fullInput.trim(), streaming);
+    } else {
+      // If nothing was piped, but we are not in a TTY, it's an ambiguous state.
+      // For now, we can assume the user intended to start an interactive chat.
+      this.runInteractiveChat(streaming);
     }
   }
 
   private runInteractiveChat(streaming: boolean): void {
-    console.log(chalk.blue('🤖 Ollama SmolLM CLI'));
+    const providerName = this.config.apiProvider === 'huggingface' ? 'Hugging Face' : 'Ollama';
+    console.log(chalk.blue(`🤖 CLI connected to ${providerName}`));
     console.log(chalk.gray('Type "exit" or press Ctrl+C to quit. Use up/down arrows for history.\n'));
     console.log(chalk.gray('Commands: "clear", "new", or use "@ <file_path>" to analyze a file.\n'));
     console.log(chalk.gray('          "!exec <command>" to execute a shell command.\n'));
@@ -181,13 +222,13 @@ export class CLI {
       this.history.addMessage(userMessage);
 
       try {
-        process.stdout.write(chalk.blue('SmolLM: '));
+        const modelName = this.config.apiProvider === 'huggingface' ? this.config.hfModel : this.config.model;
+        process.stdout.write(chalk.blue(`${modelName}: `));
         
-        const config = getConfig();
         const relevantHistory = await getRelevantHistory(
           userMessage,
           this.history.getCurrentConversation().slice(0, -1), // History before the new message
-          config.maxHistory,
+          this.config.maxHistory,
           this.api
         );
         
@@ -240,8 +281,9 @@ export class CLI {
       content: question
     };
 
+    const modelName = this.config.apiProvider === 'huggingface' ? this.config.hfModel : this.config.model;
     console.log(chalk.green('Question: ') + question);
-    process.stdout.write(chalk.blue('SmolLM: '));
+    process.stdout.write(chalk.blue(`${modelName}: `));
 
     try {
       if (streaming) {
@@ -283,7 +325,8 @@ export class CLI {
             ? [...this.history.getCurrentConversation().slice(0, -1), { role: 'user', content: prompt }]
             : [{ role: 'user', content: prompt }];
 
-        process.stdout.write(chalk.blue('SmolLM: '));
+        const modelName = this.config.apiProvider === 'huggingface' ? this.config.hfModel : this.config.model;
+        process.stdout.write(chalk.blue(`${modelName}: `));
         try {
             let fullResponse = '';
             for await (const chunk of this.api.streamChat(messages)) {
@@ -327,7 +370,7 @@ export class CLI {
     }
 
     if (!inChat) {
-        console.log(chalk.blue('📝 Summary generated. Sending to SmolLM for analysis...'));
+        console.log(chalk.blue('📝 Summary generated. Sending to model for analysis...'));
         console.log(summarizedContent);
     }
 
@@ -340,7 +383,8 @@ export class CLI {
       { role: 'user', content: prompt }
     ];
 
-    process.stdout.write(chalk.blue('SmolLM: '));
+    const modelName = this.config.apiProvider === 'huggingface' ? this.config.hfModel : this.config.model;
+    process.stdout.write(chalk.blue(`${modelName}: `));
 
     try {
       if (streaming) {
@@ -400,7 +444,7 @@ export class CLI {
     
     conversations.forEach((conv) => {
       const indicator = conv.index === this.history['history'].currentIndex ? '→' : ' ';
-      const preview = conv.lastMessage ? `: "${conv.lastMessage}..."` : ': (empty)';
+      const preview = conv.lastMessage ? `: "${conv.lastMessage}"...` : ': (empty)';
       
       console.log(
         `${indicator} ${chalk.cyan(`[${conv.index}]`)} ` +

@@ -1,10 +1,19 @@
 import fetch from 'node-fetch';
 import { Readable } from 'stream';
-import { ChatRequest, ChatResponse, Message, EmbeddingRequest, EmbeddingResponse } from './types';
+import { InferenceClient } from '@huggingface/inference';
+import { ChatRequest, ChatResponse, Message, EmbeddingRequest, EmbeddingResponse, Config } from './types';
 import { getConfig } from './config';
 
 export class OllamaAPI {
-  private config = getConfig();
+  private config: Config;
+  private hfClient?: InferenceClient;
+
+  constructor(config?: Config) {
+    this.config = config || getConfig();
+    if (this.config.apiProvider === 'huggingface' || this.config.apiProvider === 'hf-inference') {
+      this.hfClient = new InferenceClient(this.config.hfToken);
+    }
+  }
 
   /**
    * Gets the messages formatted for the API request, including a system prompt
@@ -15,7 +24,8 @@ export class OllamaAPI {
   private getWindowedMessages(messages: Message[]): Message[] {
     const systemMessage: Message = { 
       role: 'system', 
-      content: 'You are a command-line assistant. Be extremely concise. No chatter. No explanations. Just the answer.' 
+      content: '/no_think You are a command-line assistant. answer with english.' 
+      // content: '/no_think' 
     };
 
     const maxChars = 2048;
@@ -53,19 +63,65 @@ export class OllamaAPI {
    * @param messages The array of messages to send.
    */
   async *streamChat(messages: Message[]): AsyncGenerator<string> {
+    if (this.config.apiProvider === 'huggingface' || this.config.apiProvider === 'hf-inference') {
+      yield* this.streamChatHuggingFace(messages);
+    } else {
+      yield* this.streamChatOllama(messages);
+    }
+  }
+
+  private async *streamChatHuggingFace(messages: Message[]): AsyncGenerator<string> {
+    if (!this.hfClient) {
+      throw new Error("Hugging Face client is not initialized.");
+    }
+    // console.log("here ....");
+    // First, create a version of messages without the timestamp for windowing
+    const baseMessages = messages.map(({ role, content }) => ({ role, content }));
+    const windowedMessages = this.getWindowedMessages(baseMessages);
+
+    // Final clean for the API call
+    const finalMessages = windowedMessages.map(({ role, content }) => ({ role, content }));
+    // console.log(finalMessages);
+
+    // const params: any = {
+    //   model: this.config.hfModel, // Use model from config
+    //   messages: finalMessages,
+    //   temperature: this.config.temperature,
+    //   top_p: this.config.top_p,
+    // };
+
+    // if (this.config.apiProvider === 'hf-inference') {
+    //   params.provider = 'hf-inference';
+    // }
+    
+    const stream = this.hfClient.chatCompletionStream({
+      provider: "hf-inference",
+      model: "HuggingFaceTB/SmolLM3-3B",
+      messages: finalMessages
+    });
+
+    for await (const chunk of stream) {
+      if (chunk.choices && chunk.choices.length > 0) {
+        const newContent = chunk.choices[0].delta?.content;
+        if (newContent) {
+          yield newContent;
+        }
+      }
+    }
+  }
+
+  private async *streamChatOllama(messages: Message[]): AsyncGenerator<string> {
+    const cleanMessages = messages.map(({ role, content }) => ({ role, content }));
     const request: ChatRequest = {
       model: this.config.model,
       stream: true,
-      messages: this.getWindowedMessages(messages),
+      messages: this.getWindowedMessages(cleanMessages),
       temperature: this.config.temperature,
       top_p: this.config.top_p,
       repeat_penalty: this.config.repeat_penalty
     };
 
     try {
-
-      
-      
       const response = await fetch(this.config.apiUrl, {
         method: 'POST',
         headers: {
@@ -73,8 +129,6 @@ export class OllamaAPI {
         },
         body: JSON.stringify(request)
       });
-
-
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -120,14 +174,30 @@ export class OllamaAPI {
    * @returns The embedding vector.
    */
   async getEmbedding(text: string): Promise<number[]> {
+    if (this.config.apiProvider === 'huggingface') {
+      if (!this.hfClient) {
+        throw new Error("Hugging Face client is not initialized.");
+      }
+      try {
+        const embedding = await this.hfClient.featureExtraction({
+          model: this.config.hfEmbeddingModel,
+          inputs: text,
+        });
+        return Array.isArray(embedding[0]) ? embedding[0] as number[] : embedding as number[];
+      } catch (error) {
+        throw new Error(`Failed to generate Hugging Face embedding: ${error}`);
+      }
+    }
+
     const request: EmbeddingRequest = {
       model: this.config.model,
       prompt: text,
     };
 
     try {
-      // The embeddings endpoint is usually at /api/embeddings
-      const embeddingApiUrl = this.config.apiUrl.replace('/api/chat', '/api/embeddings');
+      const url = new URL(this.config.apiUrl);
+      url.pathname = '/api/embeddings';
+      const embeddingApiUrl = url.toString();
       
       const response = await fetch(embeddingApiUrl, {
         method: 'POST',
@@ -145,7 +215,7 @@ export class OllamaAPI {
       const data: EmbeddingResponse = await response.json();
       return data.embedding;
     } catch (error) {
-      throw new Error(`Failed to generate embedding: ${error}`);
+      throw new Error(`Failed to generate Ollama embedding: ${error}`);
     }
   }
 
@@ -155,32 +225,41 @@ export class OllamaAPI {
    * @returns The content of the assistant's response.
    */
   async sendMessage(messages: Message[]): Promise<string> {
-    const request: ChatRequest = {
-      model: this.config.model,
-      stream: false,
-      messages: this.getWindowedMessages(messages),
-      temperature: this.config.temperature,
-      top_p: this.config.top_p,
-      repeat_penalty: this.config.repeat_penalty
-    };
-
-    try {
-      const response = await fetch(this.config.apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(request)
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+    if (this.config.apiProvider === 'huggingface' || this.config.apiProvider === 'hf-inference') {
+      let fullResponse = '';
+      for await (const chunk of this.streamChatHuggingFace(messages)) {
+        fullResponse += chunk;
       }
+      return fullResponse;
+    } else {
+      const cleanMessages = messages.map(({ role, content }) => ({ role, content }));
+      const request: ChatRequest = {
+        model: this.config.model,
+        stream: false,
+        messages: this.getWindowedMessages(cleanMessages),
+        temperature: this.config.temperature,
+        top_p: this.config.top_p,
+        repeat_penalty: this.config.repeat_penalty
+      };
 
-      const data: ChatResponse = await response.json();
-      return data.message.content;
-    } catch (error) {
-      throw new Error(`Failed to connect to Ollama API: ${error}`);
+      try {
+        const response = await fetch(this.config.apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(request)
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data: ChatResponse = await response.json();
+        return data.message.content;
+      } catch (error) {
+        throw new Error(`Failed to connect to Ollama API: ${error}`);
+      }
     }
   }
 }
